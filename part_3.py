@@ -128,6 +128,41 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:,:x.size(1), :]
     
 
+class SelfAttention(nn.Module):
+    def __init__(self, d_model: int):
+        super().__init__()
+        
+        self.query = nn.Linear(d_model, d_model)
+        self.key = nn.Linear(d_model, d_model)
+        self.value = nn.Linear(d_model, d_model)
+        self.fc_out = nn.Linear(d_model, d_model)
+        self.dropout = nn.Dropout(0.2)
+
+
+    def forward(self, inputs: torch.Tensor):
+        B, seq_length, d_model = inputs.shape
+        
+        # Project the input embeddings into Q, K, and V
+        Q = self.query(inputs)
+        K = self.key(inputs)
+        V = self.value(inputs)
+        
+        # Compute attention scores
+        attention_scores = torch.matmul(Q, K.transpose(-2, -1))
+        
+        # Apply mask to prevent attention to future tokens
+        mask = torch.triu(torch.ones(seq_length, seq_length), diagonal=1).bool().to(inputs.device)
+        attention_scores = attention_scores.masked_fill(mask, float('-inf'))
+        
+        attention_weights = torch.softmax(attention_scores, dim=-1)
+        # Compute the weighted sum of the values
+        attention_output = torch.matmul(attention_weights, V)
+
+        # Apply the final linear transformation
+        out = self.fc_out(attention_output)
+        
+        return out
+
 
 class GPT(nn.Module):
 
@@ -141,7 +176,7 @@ class GPT(nn.Module):
             nn.GELU(),
             nn.Linear(4 * d_model, d_model)
         )
-        self.dropout = nn.Dropout(0.2)  # регуляризация
+        self.att = SelfAttention(d_model)
 
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor = None) -> tuple:
@@ -153,8 +188,8 @@ class GPT(nn.Module):
         # Добавляем позиционные эмбеддинги к токеновым эмбеддингам
         logits = logits + self.wpe(logits)  # [batch_size, seq_length, d_model]
 
-        # Применение Dropout
-        logits = self.dropout(logits)
+        # Применение SelfAttention
+        logits = self.att(logits)  # [batch_size, seq_length, d_model]
 
         # Пропуск через fcn
         logits = self.fcn(logits)  # [batch_size, seq_length, d_model]
@@ -203,7 +238,7 @@ with torch.no_grad():
 lr = 1e-3
 optim = torch.optim.AdamW(m.parameters(), lr=lr)
 
-epochs = 10000
+epochs = 5000
 eval_steps = 100 # perform evaluation in every n steps
 for ep in range(epochs):
     xb, yb = train_loader.get_batch()
