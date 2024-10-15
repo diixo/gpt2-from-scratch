@@ -141,7 +141,7 @@ class GPT(nn.Module):
             nn.GELU(),
             nn.Linear(4 * d_model, d_model)
         )
-        self.dropout = nn.Dropout(0.1)  # регуляризация
+        self.dropout = nn.Dropout(0.2)  # регуляризация
 
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor = None) -> tuple:
