@@ -33,10 +33,10 @@ def decode(input_tokens: list[int]) -> str:
 data = torch.tensor(encode(text), dtype=torch.long, device=device)
 
 
-train_batch_size = 16  # training batch size
-eval_batch_size = 8  # evaluation batch size
-context_length = 256  # number of tokens processed in a single batch
-train_split = 0.8  # percentage of data to use from total data for training
+train_batch_size = 16   # training batch size
+eval_batch_size = 8     # evaluation batch size
+context_length = 256    # number of tokens processed in a single batch
+train_split = 0.8       # percentage of data to use from total data for training
 
 # split data into trian and eval
 n_data = len(data)
@@ -51,6 +51,7 @@ class DataLoader:
         self.context_length = context_length
 
         self.current_position = 0
+
 
     def get_batch(self) -> torch.tensor:
         b, c = self.batch_size, self.context_length
@@ -75,6 +76,7 @@ class DataLoader:
         y = (d[1:]).view(b, c)  # targets
 
         return x, y
+
 
 train_loader = DataLoader(train_data, train_batch_size, context_length)
 eval_loader = DataLoader(eval_data, eval_batch_size, context_length)
@@ -101,7 +103,8 @@ class GPT(nn.Module):
     def __init__(self, vocab_size, d_model):
         super().__init__()
         self.wte = nn.Embedding(vocab_size, d_model) # word token embeddings
-    
+
+
     def forward(self, inputs, targets = None):
         logits = self.wte(inputs) # dim -> batch_size, sequence_length, d_model
         loss = None
@@ -113,7 +116,8 @@ class GPT(nn.Module):
             targets = targets.view(batch_size * sequence_length)
             loss = F.cross_entropy(logits, targets)
         return logits, loss
-    
+
+
     def generate(self, inputs, max_new_tokens):
         # this will store the model outputs along with the initial input sequence
         # make a copy so that it doesn't interfare with model 
@@ -129,6 +133,7 @@ class GPT(nn.Module):
             inputs = torch.cat([inputs, idx_next], dim=1)
         # as the inputs has all model outputs + initial inputs, we can use it as final output
         return inputs
+
 
 m = GPT(vocab_size=vocab_size, d_model=d_model).to(device)
 

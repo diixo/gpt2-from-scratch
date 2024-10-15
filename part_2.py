@@ -1,4 +1,5 @@
 
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -33,10 +34,11 @@ def decode(input_tokens: list[int]) -> str:
 data = torch.tensor(encode(text), dtype=torch.long, device=device)
 
 
-train_batch_size = 16  # training batch size
-eval_batch_size = 8  # evaluation batch size
-context_length = 256  # number of tokens processed in a single batch
-train_split = 0.8  # percentage of data to use from total data for training
+train_batch_size = 16   # training batch size
+eval_batch_size = 8     # evaluation batch size
+context_length = 256    # number of tokens processed in a single batch
+train_split = 0.8       # percentage of data to use from total data for training
+gen_size = 180          # should be less than context_length
 
 # split data into trian and eval
 n_data = len(data)
@@ -97,23 +99,78 @@ d_model = vocab_size
 # we can have a custom embedding_dimension.
 
 
+# define our PE Class
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, context_length, d_model) -> None:
+        super().__init__()
+        # Create a matrix of shape (context_length, d_model) to store the positional encodings
+        pe = torch.zeros(context_length, d_model)
+        
+        # Create a vector with positions [0, 1, 2, ..., context_length-1] of shape (context_length, 1)
+        position = torch.arange(0, context_length, dtype=torch.float).unsqueeze(1)
+        
+        # Create a vector with the divisor terms based on the dimension
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        
+        # Compute the positional encodings using sine and cosine functions
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        pe = pe.unsqueeze(0)  # Shape: (1, context_length, d_model)
+        
+        # Register pe as a buffer, so it is not considered a parameter but is part of the module's state
+        self.register_buffer('pe', pe)
+
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Add the positional encodings to the input embeddings
+        return x + self.pe[:,:x.size(1), :]
+    
+
+
 class GPT(nn.Module):
+
     def __init__(self, vocab_size, d_model):
         super().__init__()
         self.wte = nn.Embedding(vocab_size, d_model) # word token embeddings
-    
-    def forward(self, inputs, targets = None):
-        logits = self.wte(inputs) # dim -> batch_size, sequence_length, d_model
+        # initialize positional encodings
+        self.wpe = PositionalEncoding(context_length, d_model)
+        self.fcn = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model)
+        )
+        self.dropout = nn.Dropout(0.1)  # регуляризация
+
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor = None) -> tuple:
+        batch_size, sequence_length = inputs.shape
+
+        # Token embeddings
+        logits = self.wte(inputs)  # [batch_size, seq_length, d_model]
+
+        # Добавляем позиционные эмбеддинги к токеновым эмбеддингам
+        logits = logits + self.wpe(logits)  # [batch_size, seq_length, d_model]
+
+        # Применение Dropout
+        logits = self.dropout(logits)
+
+        # Пропуск через fcn
+        logits = self.fcn(logits)  # [batch_size, seq_length, d_model]
+
         loss = None
-        if targets != None:
-            batch_size, sequence_length, d_model = logits.shape
-            # to calculate loss for all token embeddings in a batch
-            # kind of a requirement for cross_entropy
-            logits = logits.view(batch_size * sequence_length, d_model)
-            targets = targets.view(batch_size * sequence_length)
+        if targets is not None:
+            # Преобразование логитов и целей для корректного вычисления кросс-энтропии
+            logits = logits.view(batch_size * sequence_length, logits.size(-1))  # [batch_size * seq_length, d_model]
+            targets = targets.view(batch_size * sequence_length)  # [batch_size * seq_length]
+
+            # Вычисление функции потерь
             loss = F.cross_entropy(logits, targets)
+
         return logits, loss
-    
+
+
     def generate(self, inputs, max_new_tokens):
         # this will store the model outputs along with the initial input sequence
         # make a copy so that it doesn't interfare with model 
@@ -130,6 +187,7 @@ class GPT(nn.Module):
         # as the inputs has all model outputs + initial inputs, we can use it as final output
         return inputs
 
+
 m = GPT(vocab_size=vocab_size, d_model=d_model).to(device)
 
 
@@ -138,7 +196,7 @@ m = GPT(vocab_size=vocab_size, d_model=d_model).to(device)
 
 with torch.no_grad():
     input = torch.tensor(encode("Love"), dtype=torch.long, device=device).unsqueeze(0)
-    print(decode(m.generate(input, max_new_tokens=144)[0].numpy()))
+    print(decode(m.generate(input, max_new_tokens=gen_size)[0].numpy()))
 
 #####################################################################################
 
@@ -167,4 +225,4 @@ for ep in range(epochs):
 
 with torch.no_grad():
     input = torch.tensor(encode("Love"), dtype=torch.long, device=device).unsqueeze(0)
-    print(decode(m.generate(input, max_new_tokens=144)[0].numpy()))
+    print(decode(m.generate(input, max_new_tokens=gen_size)[0].numpy()))
