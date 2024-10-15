@@ -67,11 +67,13 @@ class DataLoader:
 
         d = self.tokens[start_pos:end_pos]
         if add_data != -1:
-            d = torch.cat([d, self.tokens[:add_data]])
+            d = torch.cat([d, self.tokens[:add_data + 2]])
+            self.current_position = 0
+        else:
+            self.current_position += b * c # set the next position
         x = (d[:-1]).view(b, c)  # inputs
         y = (d[1:]).view(b, c)  # targets
 
-        self.current_position += b * c # set the next position
         return x, y
 
 train_loader = DataLoader(train_data, train_batch_size, context_length)
@@ -140,10 +142,10 @@ with torch.no_grad():
 
 #####################################################################################
 
-lr = 5e-4
+lr = 1e-3
 optim = torch.optim.AdamW(m.parameters(), lr=lr)
 
-epochs = 2000
+epochs = 10000
 eval_steps = 100 # perform evaluation in every n steps
 for ep in range(epochs):
     xb, yb = train_loader.get_batch()
@@ -161,3 +163,8 @@ for ep in range(epochs):
 
             print(f"Epoch: {ep}\tlr: {lr}\ttrain_loss: {loss}\teval_loss: {e_loss}")
         m.train() # back to training mode
+
+
+with torch.no_grad():
+    input = torch.tensor(encode("Love"), dtype=torch.long, device=device).unsqueeze(0)
+    print(decode(m.generate(input, max_new_tokens=144)[0].numpy()))
