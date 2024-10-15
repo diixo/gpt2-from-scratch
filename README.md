@@ -9,3 +9,7 @@
 part_1.py : Basic model NN learning
 part_2.py : Positional Encoding (PE) + NN
 part_3.py : (Masked) Self-Attention + Normalization
+part_4.py : (Masked) Multi-head Attention
+part_5.py : GPT Decoder Blocks
+part_6.py : Improving Tokenizer
+part_7.py : Final GPT-2 Training
