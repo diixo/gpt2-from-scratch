@@ -1,3 +1,4 @@
+
 import math
 import torch
 import torch.nn as nn
@@ -87,4 +88,141 @@ xb, yb = train_loader.get_batch()
 print(xb.shape, yb.shape)
 
 ##########################################################################################
+# InputTokens -->> Embedding -->> Softmax -->> Prediction
 
+# used to define size of embeddings
+d_model = vocab_size
+
+# The embedding dimension or d_model is vocab_size currently because the final output has to map 
+# to the logits for each character in vocab to calculate their probabilities. 
+# Later on we will introduce a Linear layer which will map d_model to vocab_size and then 
+# we can have a custom embedding_dimension.
+
+
+# define our PE Class
+class PositionalEncoding(nn.Module):
+
+    def __init__(self, context_length, d_model) -> None:
+        super().__init__()
+        # Create a matrix of shape (context_length, d_model) to store the positional encodings
+        pe = torch.zeros(context_length, d_model)
+        
+        # Create a vector with positions [0, 1, 2, ..., context_length-1] of shape (context_length, 1)
+        position = torch.arange(0, context_length, dtype=torch.float).unsqueeze(1)
+        
+        # Create a vector with the divisor terms based on the dimension
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        
+        # Compute the positional encodings using sine and cosine functions
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        pe = pe.unsqueeze(0)  # Shape: (1, context_length, d_model)
+        
+        # Register pe as a buffer, so it is not considered a parameter but is part of the module's state
+        self.register_buffer('pe', pe)
+
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Add the positional encodings to the input embeddings
+        return x + self.pe[:,:x.size(1), :]
+    
+
+
+class GPT(nn.Module):
+
+    def __init__(self, vocab_size, d_model):
+        super().__init__()
+        self.wte = nn.Embedding(vocab_size, d_model) # word token embeddings
+        # initialize positional encodings
+        self.wpe = PositionalEncoding(context_length, d_model)
+        self.fcn = nn.Sequential(
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model)
+        )
+        self.dropout = nn.Dropout(0.2)  # регуляризация
+
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor = None) -> tuple:
+        batch_size, sequence_length = inputs.shape
+
+        # Token embeddings
+        logits = self.wte(inputs)  # [batch_size, seq_length, d_model]
+
+        # Добавляем позиционные эмбеддинги к токеновым эмбеддингам
+        logits = logits + self.wpe(logits)  # [batch_size, seq_length, d_model]
+
+        # Применение Dropout
+        logits = self.dropout(logits)
+
+        # Пропуск через fcn
+        logits = self.fcn(logits)  # [batch_size, seq_length, d_model]
+
+        loss = None
+        if targets is not None:
+            # Преобразование логитов и целей для корректного вычисления кросс-энтропии
+            logits = logits.view(batch_size * sequence_length, logits.size(-1))  # [batch_size * seq_length, d_model]
+            targets = targets.view(batch_size * sequence_length)  # [batch_size * seq_length]
+
+            # Вычисление функции потерь
+            loss = F.cross_entropy(logits, targets)
+
+        return logits, loss
+
+
+    def generate(self, inputs, max_new_tokens):
+        # this will store the model outputs along with the initial input sequence
+        # make a copy so that it doesn't interfare with model 
+        for _ in range(max_new_tokens):
+            # we only pass targets on training to calculate loss
+            logits, _ = self(inputs)  
+            # for all the batches, get the embeds for last predicted sequence
+            logits = logits[:, -1, :] 
+            probs = F.softmax(logits, dim=1)            
+            # get the probable token based on the input probs
+            idx_next = torch.multinomial(probs, num_samples=1) 
+            
+            inputs = torch.cat([inputs, idx_next], dim=1)
+        # as the inputs has all model outputs + initial inputs, we can use it as final output
+        return inputs
+
+
+m = GPT(vocab_size=vocab_size, d_model=d_model).to(device)
+
+
+# We have now successfully defined our model with just one Embedding layer and Softmax for token generation.
+# Let's see how our model behaves when given some input characters.
+
+with torch.no_grad():
+    input = torch.tensor(encode("Love"), dtype=torch.long, device=device).unsqueeze(0)
+    print(decode(m.generate(input, max_new_tokens=gen_size)[0].numpy()))
+
+#####################################################################################
+
+lr = 1e-3
+optim = torch.optim.AdamW(m.parameters(), lr=lr)
+
+epochs = 10000
+eval_steps = 100 # perform evaluation in every n steps
+for ep in range(epochs):
+    xb, yb = train_loader.get_batch()
+
+    logits, loss = m(xb, yb)
+    optim.zero_grad(set_to_none=True)
+    loss.backward()
+    optim.step()
+
+    if ep % eval_steps == 0 or ep == epochs-1:
+        m.eval()
+        with torch.no_grad():
+            xvb, yvb = eval_loader.get_batch()
+            _, e_loss = m(xvb, yvb)
+
+            print(f"Epoch: {ep}\tlr: {lr}\ttrain_loss: {loss}\teval_loss: {e_loss}")
+        m.train() # back to training mode
+
+
+with torch.no_grad():
+    input = torch.tensor(encode("Love"), dtype=torch.long, device=device).unsqueeze(0)
+    print(decode(m.generate(input, max_new_tokens=gen_size)[0].numpy()))
