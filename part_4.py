@@ -177,22 +177,21 @@ class GPT(nn.Module):
             nn.Linear(4 * d_model, d_model)
         )
         self.att = SelfAttention(d_model)
+        self.ln1 = nn.LayerNorm(d_model)
+        self.ln2 = nn.LayerNorm(d_model)
+        self.dropout = nn.Dropout(0.2)
 
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor = None) -> tuple:
         batch_size, sequence_length = inputs.shape
 
-        # Token embeddings
-        logits = self.wte(inputs)  # [batch_size, seq_length, d_model]
-
-        # Добавляем позиционные эмбеддинги к токеновым эмбеддингам
-        logits = logits + self.wpe(logits)  # [batch_size, seq_length, d_model]
-
-        # Применение SelfAttention
-        logits = self.att(logits)  # [batch_size, seq_length, d_model]
-
-        # Пропуск через fcn
-        logits = self.fcn(logits)  # [batch_size, seq_length, d_model]
+        logits = self.wte(inputs)
+        logits = self.wpe(logits)
+        att_logits = self.att(logits)
+        adn_logits = self.ln1(logits + att_logits)
+        logits = self.dropout(adn_logits)
+        logits = self.fcn(logits)
+        logits = self.ln2(logits + adn_logits)
 
         loss = None
         if targets is not None:
