@@ -163,10 +163,13 @@ class SelfAttention(nn.Module):
         
         return out
 
+# used to define size of embeddings
+# d_model = 512
 
 class GPT(nn.Module):
 
     def __init__(self, vocab_size, d_model):
+
         super().__init__()
         self.wte = nn.Embedding(vocab_size, d_model) # word token embeddings
         # initialize positional encodings
@@ -180,6 +183,7 @@ class GPT(nn.Module):
         self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(0.2)
+        #self.linear1 = nn.Linear(d_model, vocab_size)
 
 
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor = None) -> tuple:
@@ -192,6 +196,7 @@ class GPT(nn.Module):
         logits = self.dropout(adn_logits)
         logits = self.fcn(logits)
         logits = self.ln2(logits + adn_logits)
+        #logits = self.linear1(logits)
 
         loss = None
         if targets is not None:
