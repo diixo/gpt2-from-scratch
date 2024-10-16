@@ -38,7 +38,7 @@ train_batch_size = 16   # training batch size
 eval_batch_size = 8     # evaluation batch size
 context_length = 256    # number of tokens processed in a single batch
 train_split = 0.8       # percentage of data to use from total data for training
-gen_size = 180          # should be less than context_length
+gen_size = 200          # should be less than context_length
 
 # split data into trian and eval
 n_data = len(data)
@@ -126,12 +126,21 @@ class PositionalEncoding(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Add the positional encodings to the input embeddings
         return x + self.pe[:,:x.size(1), :]
-    
 
-class SelfAttention(nn.Module):
-    def __init__(self, d_model: int):
+
+
+n_heads = 4 # number of self-attention heads. should be divisible with d_model (d_model=vocabulary_size=92)
+
+class MultiHeadAttention(nn.Module):
+
+    def __init__(self, d_model: int, n_heads: int):
         super().__init__()
         
+        self.n_heads = n_heads
+        self.head_dim = d_model // n_heads
+
+        assert (n_heads * self.head_dim == d_model)
+
         self.query = nn.Linear(d_model, d_model)
         self.key = nn.Linear(d_model, d_model)
         self.value = nn.Linear(d_model, d_model)
@@ -143,12 +152,12 @@ class SelfAttention(nn.Module):
         B, seq_length, d_model = inputs.shape
         
         # Project the input embeddings into Q, K, and V
-        Q = self.query(inputs)
-        K = self.key(inputs)
-        V = self.value(inputs)
+        Q = self.query(inputs).view(B, seq_length, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        K = self.key(inputs).view(B, seq_length, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        V = self.value(inputs).view(B, seq_length, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
         
         # Compute attention scores
-        attention_scores = torch.matmul(Q, K.transpose(-2, -1))
+        attention_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
         
         # Apply mask to prevent attention to future tokens
         mask = torch.triu(torch.ones(seq_length, seq_length), diagonal=1).bool().to(inputs.device)
@@ -156,19 +165,21 @@ class SelfAttention(nn.Module):
         
         attention_weights = torch.softmax(attention_scores, dim=-1)
         # Compute the weighted sum of the values
-        attention_output = torch.matmul(attention_weights, V)
+        attention_output = torch.matmul(self.dropout(attention_weights), V)
+
+        # Concatenate heads and put them back to the original shape
+        attention_output = attention_output.permute(0, 2, 1, 3).contiguous()
+        attention_output = attention_output.view(B, seq_length, d_model)
 
         # Apply the final linear transformation
         out = self.fc_out(attention_output)
         
         return out
 
-# used to define size of embeddings
-# d_model = 512
 
 class GPT(nn.Module):
 
-    def __init__(self, vocab_size, d_model):
+    def __init__(self, vocab_size, d_model, n_heads):
 
         super().__init__()
         self.wte = nn.Embedding(vocab_size, d_model) # word token embeddings
@@ -179,7 +190,7 @@ class GPT(nn.Module):
             nn.GELU(),
             nn.Linear(4 * d_model, d_model)
         )
-        self.att = SelfAttention(d_model)
+        self.att = MultiHeadAttention(d_model, n_heads)
         self.ln1 = nn.LayerNorm(d_model)
         self.ln2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(0.2)
@@ -227,7 +238,7 @@ class GPT(nn.Module):
         return inputs
 
 
-m = GPT(vocab_size=vocab_size, d_model=d_model).to(device)
+m = GPT(vocab_size=vocab_size, d_model=d_model, n_heads=n_heads).to(device)
 
 
 # We have now successfully defined our model with just one Embedding layer and Softmax for token generation.
