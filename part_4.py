@@ -274,5 +274,5 @@ for ep in range(epochs):
 
 
 with torch.no_grad():
-    input = torch.tensor(encode("Love"), dtype=torch.long, device=device).unsqueeze(0)
+    input = torch.tensor(encode("Love "), dtype=torch.long, device=device).unsqueeze(0)
     print(decode(m.generate(input, max_new_tokens=gen_size)[0].numpy()))
