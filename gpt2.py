@@ -10,8 +10,7 @@ vocab_size = tokenizer.n_vocab
 
 # use cpu or gpu based on your system
 device = "cpu"
-if torch.cuda.is_available():
-    device = "cuda"
+
 
 data_dir = "data.txt"
 text = open(data_dir, "r").read()  # load all the data as simple string
@@ -21,20 +20,15 @@ data = torch.tensor(tokenizer.encode(text), dtype=torch.long, device=device)
 
 train_batch_size = 16  # training batch size
 eval_batch_size = 8  # evaluation batch size
-context_length = 512  # number of tokens processed in a single batch
-train_split = 0.7  # percentage of data to use from total data for training
+context_length = 128  # number of tokens processed in a single batch
+train_split = 0.8  # percentage of data to use from total data for training
 
 
 # used to define size of embeddings
-d_model = 768
+d_model = 48
 n_heads = 4  # number of self-attention heads. should be divisible with d_model
-n_layers = 8  # number of gpt blocks/layers
+n_layers = 4  # number of gpt blocks/layers
 
-
-# training setup
-epochs = 2000
-eval_steps = 500  # perform evaluation in every n steps
-lr = 1e-3
 
 # split data into trian and eval
 n_data = len(data)
@@ -82,6 +76,11 @@ train_loader = DataLoader(train_data, train_batch_size, context_length)
 eval_loader = DataLoader(eval_data, eval_batch_size, context_length)
 
 
+# used to define size of embeddings
+d_model = 48
+n_heads = 4 # number of self-attention heads. should be divisible with d_model
+n_layers = 1 # number of gpt blocks/layers
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model: int, n_heads: int):
         super().__init__()
@@ -101,33 +100,15 @@ class MultiHeadAttention(nn.Module):
         B, seq_length, d_model = inputs.shape
 
         # Project the input embeddings into Q, K, and V
-        Q = (
-            self.query(inputs)
-            .view(B, seq_length, self.n_heads, self.head_dim)
-            .permute(0, 2, 1, 3)
-        )
-        K = (
-            self.key(inputs)
-            .view(B, seq_length, self.n_heads, self.head_dim)
-            .permute(0, 2, 1, 3)
-        )
-        V = (
-            self.value(inputs)
-            .view(B, seq_length, self.n_heads, self.head_dim)
-            .permute(0, 2, 1, 3)
-        )
+        Q = self.query(inputs).view(B, seq_length, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        K = self.key(inputs).view(B, seq_length, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
+        V = self.value(inputs).view(B, seq_length, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
 
         # Compute attention scores
-        attention_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(
-            self.head_dim
-        )
+        attention_scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
 
         # Apply mask to prevent attention to future tokens
-        mask = (
-            torch.triu(torch.ones(seq_length, seq_length), diagonal=1)
-            .bool()
-            .to(inputs.device)
-        )
+        mask = torch.triu(torch.ones(seq_length, seq_length), diagonal=1).bool().to(inputs.device)
         attention_scores = attention_scores.masked_fill(mask, float("-inf"))
 
         attention_weights = torch.softmax(attention_scores, dim=-1)
@@ -180,7 +161,9 @@ class GPTBlock(nn.Module):
         self.ln2 = nn.LayerNorm(d_model)
         self.dropout = nn.Dropout(0.2)
         self.fcn = nn.Sequential(
-            nn.Linear(d_model, 4 * d_model), nn.GELU(), nn.Linear(4 * d_model, d_model)
+            nn.Linear(d_model, 4 * d_model),
+            nn.GELU(),
+            nn.Linear(4 * d_model, d_model)
         )
 
     def forward(self, logits):
@@ -246,12 +229,23 @@ class GPT(nn.Module):
 
 
 m = GPT(vocab_size=vocab_size, d_model=d_model, n_heads=n_heads, n_layers=n_layers).to(device)
-m = torch.compile(m)
 
+print(f"Total Parameters: {round(sum(p.numel() for p in m.parameters() if p.requires_grad) / 1_000_000)}M")
 
 optim = torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=0.1)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=3000, eta_min=lr*0.1)
 
+
+
+lr = 8e-4
+epochs = 4500
+eval_steps = 100 # perform evaluation in every n steps
+
+# store the losses
+train_loss = {}
+
+
+# train the model
 for e in range(epochs):
     xb, yb = train_loader.get_batch()
 
@@ -264,6 +258,7 @@ for e in range(epochs):
 
     optim.step()
     scheduler.step()
+    train_loss[e] = loss.item()
 
     if e % eval_steps == 0 or e == epochs-1:
         m.eval()
@@ -275,9 +270,11 @@ for e in range(epochs):
 
         m.train()  # Back to training mode
 
+
 # saying to torch that do not store gradients for whatever we do below
 with torch.no_grad():
-    input = torch.tensor(
-        tokenizer.encode("Love "), dtype=torch.long, device=device
-    ).unsqueeze(0)
-    print(m.generate(input, max_new_tokens=500)[0])
+    input = torch.tensor(tokenizer.encode("Love "), dtype=torch.long, device=device).unsqueeze(0)
+    print(m.generate(input, max_new_tokens=100)[0])
+
+torch.save(m.state_dict(), 'gpt2_weights.pth')
+
