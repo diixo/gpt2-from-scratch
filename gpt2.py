@@ -21,14 +21,15 @@ data = torch.tensor(tokenizer.encode(text), dtype=torch.long, device=device)
 train_batch_size = 16  # training batch size
 eval_batch_size = 8  # evaluation batch size
 context_length = 128  # number of tokens processed in a single batch
-train_split = 0.8  # percentage of data to use from total data for training
+train_split = 0.75  # percentage of data to use from total data for training
 
 
 # used to define size of embeddings
-d_model = 48
 n_heads = 4  # number of self-attention heads. should be divisible with d_model
 n_layers = 4  # number of gpt blocks/layers
 
+lr = 8e-4
+epochs = 4500
 
 # split data into trian and eval
 n_data = len(data)
@@ -236,9 +237,6 @@ optim = torch.optim.AdamW(m.parameters(), lr=lr, weight_decay=0.1)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=3000, eta_min=lr*0.1)
 
 
-
-lr = 8e-4
-epochs = 4500
 eval_steps = 100 # perform evaluation in every n steps
 
 # store the losses
